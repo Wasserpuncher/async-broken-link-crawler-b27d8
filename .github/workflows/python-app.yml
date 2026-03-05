@@ -1,0 +1,44 @@
+# Dies ist ein grundlegender Workflow, um Python-Anwendungen mit Poetry zu erstellen und zu testen.
+# This is a basic workflow to build and test Python applications with Poetry.
+
+name: Python CI/CD
+
+on: # Definiert die Ereignisse, die diesen Workflow auslösen.
+    # Defines the events that trigger this workflow.
+  push:
+    branches: [ "main" ] # Auslösen bei Push auf den Main-Branch.
+                          # Trigger on push to main branch.
+  pull_request:
+    branches: [ "main" ] # Auslösen bei Pull Request auf den Main-Branch.
+                           # Trigger on pull request to main branch.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # Der Runner, auf dem der Job ausgeführt wird.
+                            # The runner on which the job will be executed.
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"] # Testet mit verschiedenen Python-Versionen.
+                                              # Tests with different Python versions.
+
+    steps:
+    - uses: actions/checkout@v3 # Checkt das Repository aus.
+                                # Checks out the repository.
+    - name: Set up Python ${{ matrix.python-version }} # Benennt den Schritt für die Python-Einrichtung.
+                                                       # Names the step for Python setup.
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }} # Verwendet die Python-Version aus der Matrix.
+                                                     # Uses the Python version from the matrix.
+    - name: Install dependencies # Benennt den Schritt für die Installation der Abhängigkeiten.
+                                 # Names the step for dependency installation.
+      run: |
+        python -m pip install --upgrade pip # Aktualisiert pip.
+                                            # Upgrades pip.
+        pip install -r requirements.txt # Installiert die Abhängigkeiten aus requirements.txt.
+                                        # Installs dependencies from requirements.txt.
+    - name: Run tests # Benennt den Schritt für die Testausführung.
+                      # Names the step for test execution.
+      run: |
+        python -m unittest discover # Führt Unit-Tests aus.
+                                    # Runs unit tests.
