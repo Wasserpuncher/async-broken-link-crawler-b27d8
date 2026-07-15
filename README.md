@@ -28,7 +28,7 @@ To get started with the Async Broken Link Crawler, follow these steps:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/async-broken-link-crawler.git
+    git clone https://github.com/Wasserpuncher/async-broken-link-crawler-b27d8.git
     cd async-broken-link-crawler
     ```
 
