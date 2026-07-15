@@ -510,12 +510,20 @@ class TestConfigFile(unittest.TestCase):
             "output_path": "out.txt",
         }))
         settings = resolve_settings({}, config)
-        crawler = AsyncWebCrawler(
-            start_url=settings["start_url"],
-            max_depth=settings["max_depth"],
-            concurrency=settings["concurrency"],
-            output_path=settings["output_path"],
-        )
+
+        # AsyncWebCrawler.__init__ erzeugt eine asyncio.Queue/Semaphore und benötigt
+        # daher einen laufenden Event-Loop (Python 3.9). Instanziierung in asyncio.run.
+        # AsyncWebCrawler.__init__ creates an asyncio.Queue/Semaphore and thus needs a
+        # running event loop (Python 3.9). Instantiate inside asyncio.run.
+        async def build():
+            return AsyncWebCrawler(
+                start_url=settings["start_url"],
+                max_depth=settings["max_depth"],
+                concurrency=settings["concurrency"],
+                output_path=settings["output_path"],
+            )
+        crawler = asyncio.run(build())
+
         self.assertEqual(crawler.max_depth, 5)
         self.assertEqual(crawler.concurrency, 3)
         self.assertEqual(crawler.output_path, "out.txt")
