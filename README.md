@@ -50,7 +50,7 @@ To get started with the Async Broken Link Crawler, follow these steps:
 Once installed, you can run the crawler from the command line. The `main.py` script serves as the entry point.
 
 ```bash
-python main.py <start_url> [--max-depth <depth>] [--concurrency <num_workers>]
+python main.py <start_url> [--config <path>] [--max-depth <depth>] [--concurrency <num_workers>] [--output <report_path>]
 ```
 
 **Example:** Crawl `https://example.com` up to a depth of 2, using 10 concurrent requests:
@@ -59,7 +59,36 @@ python main.py <start_url> [--max-depth <depth>] [--concurrency <num_workers>]
 python main.py https://example.com --max-depth 2 --concurrency 10
 ```
 
-The crawler will print broken links directly to the console.
+The crawler will print broken links directly to the console. Use `--output report.txt` to also write the report to a file.
+
+### Configuration file
+
+Instead of passing parameters on every run, you can store them in a JSON configuration file (standard library only, no extra dependencies). By default the tool loads `crawler.json` from the current directory if it exists; use `--config` to point at a different file.
+
+```json
+{
+  "start_url": "https://example.com",
+  "max_depth": 2,
+  "concurrency": 10,
+  "output_path": "broken-links-report.txt"
+}
+```
+
+Supported keys:
+
+- `start_url`: Start URL for the crawl (used when no URL is given on the command line).
+- `max_depth`, `concurrency`: Same meaning as the corresponding options.
+- `output_path`: If set, the broken-link report is written to this file in addition to being printed.
+
+Precedence is **built-in defaults < config file < command-line arguments**, so an explicit flag always wins over the config file. Unknown keys are ignored.
+
+```bash
+# Use the default crawler.json in the current directory
+python main.py
+
+# Use an explicit config file, overriding its depth on the command line
+python main.py --config configs/prod.json --max-depth 3
+```
 
 ## Architecture
 For a detailed understanding of the project's design and internal workings, please refer to our architectural documentation:

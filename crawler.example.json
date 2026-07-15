@@ -1,0 +1,6 @@
+{
+  "start_url": "https://example.com",
+  "max_depth": 2,
+  "concurrency": 10,
+  "output_path": "broken-links-report.txt"
+}

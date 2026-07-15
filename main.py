@@ -1,9 +1,66 @@
 import asyncio
 import aiohttp
 import argparse
+import json
+import os
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from typing import Set, List, Tuple, Optional
+
+
+# Standardname der Konfigurationsdatei, die geladen wird, wenn --config nicht angegeben ist.
+# Default config filename, loaded when --config is not given.
+DEFAULT_CONFIG_FILENAME = "crawler.json"
+
+# Eingebaute Standardwerte. Reihenfolge des Vorrangs: Defaults < Config-Datei < CLI-Argumente.
+# Built-in defaults. Precedence order: defaults < config file < CLI arguments.
+DEFAULT_SETTINGS = {
+    "start_url": None,
+    "max_depth": 1,
+    "concurrency": 5,
+    "output_path": None,
+}
+
+
+def load_config(path: str) -> dict:
+    """
+    Lädt eine JSON-Konfigurationsdatei und gibt die bekannten Schlüssel zurück.
+    Loads a JSON configuration file and returns the known keys.
+
+    Args:
+        path (str): Pfad zur JSON-Konfigurationsdatei. / Path to the JSON config file.
+
+    Returns:
+        dict: Die geladene Konfiguration (nur bekannte Schlüssel).
+              The loaded configuration (known keys only).
+
+    Raises:
+        FileNotFoundError: Wenn die Datei nicht existiert. / If the file does not exist.
+        ValueError: Wenn die Datei kein JSON-Objekt enthält. / If the file is not a JSON object.
+    """
+    with open(path, "r", encoding="utf-8") as f:  # Öffnet die Datei. / Opens the file.
+        data = json.load(f)  # Parst JSON (stdlib, keine externen Deps). / Parses JSON (stdlib only).
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a JSON object.")
+    return {k: v for k, v in data.items() if k in DEFAULT_SETTINGS}
+
+
+def resolve_settings(cli_overrides: dict, config: dict) -> dict:
+    """
+    Führt Defaults, Konfigurationsdatei und CLI-Argumente zusammen.
+    Merges defaults, the configuration file and CLI arguments.
+
+    Vorrang (aufsteigend): DEFAULT_SETTINGS < config < cli_overrides. Nur Werte,
+    die nicht None sind, überschreiben.
+    Precedence (ascending): DEFAULT_SETTINGS < config < cli_overrides. Only non-None
+    values override.
+    """
+    settings = dict(DEFAULT_SETTINGS)
+    for source in (config, cli_overrides):
+        for key, value in source.items():
+            if value is not None and key in settings:
+                settings[key] = value
+    return settings
 
 
 class LinkExtractor:
@@ -124,24 +181,35 @@ class BrokenLinkReporter:
         """
         self.broken_links.add((url, status_code, source_page))
 
-    def generate_report(self):
+    def generate_report(self, output_path: Optional[str] = None):
         """
-        Generiert und gibt den Bericht über defekte Links aus.
-        Generates and prints the report of broken links.
-        """
-        if not self.broken_links:
-            print("Keine defekten Links gefunden. Wunderbar!") # Keine defekten Links gefunden.
-                                                           # No broken links found.
-            return
+        Generiert den Bericht über defekte Links, gibt ihn aus und schreibt ihn
+        optional in eine Datei.
+        Generates the broken-link report, prints it and optionally writes it to a file.
 
-        print("\n--- Bericht über defekte Links ---") # Header für den Bericht.
-                                                # Header for the report.
-        for url, status, source in sorted(list(self.broken_links)): # Iteriert über die defekten Links und sortiert sie.
-                                                                  # Iterates over broken links and sorts them.
-            print(f"[DEFEKT] Status: {status} - Link: {url} (gefunden auf: {source})") # Gibt jeden defekten Link aus.
-                                                                                 # Prints each broken link.
-        print("----------------------------------") # Footer für den Bericht.
-                                                # Footer for the report.
+        Args:
+            output_path (Optional[str]): Wenn gesetzt, wird der Bericht zusätzlich in
+                diese Datei geschrieben. / If set, the report is also written to this file.
+        """
+        lines: List[str] = []  # Sammelt die Berichtszeilen für die Dateiausgabe. / Collects report lines for file output.
+        if not self.broken_links:
+            message = "Keine defekten Links gefunden. Wunderbar!"  # No broken links found.
+            print(message)
+            lines.append(message)
+        else:
+            print("\n--- Bericht über defekte Links ---")  # Header für den Bericht. / Report header.
+            lines.append("--- Bericht über defekte Links ---")
+            for url, status, source in sorted(list(self.broken_links)):  # Sortierte Ausgabe. / Sorted output.
+                line = f"[DEFEKT] Status: {status} - Link: {url} (gefunden auf: {source})"
+                print(line)
+                lines.append(line)
+            print("----------------------------------")  # Footer für den Bericht. / Report footer.
+            lines.append("----------------------------------")
+
+        if output_path:  # Schreibt den Bericht in eine Datei, wenn ein Pfad konfiguriert ist. / Writes report to file if configured.
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            print(f"Bericht geschrieben nach / Report written to: {output_path}")
 
 
 class AsyncWebCrawler:
@@ -150,7 +218,8 @@ class AsyncWebCrawler:
     An asynchronous web crawler for detecting broken links.
     """
 
-    def __init__(self, start_url: str, max_depth: int = 1, concurrency: int = 5):
+    def __init__(self, start_url: str, max_depth: int = 1, concurrency: int = 5,
+                 output_path: Optional[str] = None):
         """
         Initialisiert den AsyncWebCrawler.
         Initializes the AsyncWebCrawler.
@@ -169,6 +238,7 @@ class AsyncWebCrawler:
                                                     # Extracts the domain of the start URL.
         self.max_depth = max_depth
         self.concurrency = concurrency
+        self.output_path = output_path  # Optionaler Pfad für die Berichtsdatei. / Optional path for the report file.
         self.visited_urls: Set[str] = set() # Ein Set, um besuchte URLs zu speichern, um Endlosschleifen zu vermeiden.
                                            # A set to store visited URLs to prevent infinite loops.
         self.to_visit_queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue() # Eine Warteschlange für URLs, die noch besucht werden müssen.
@@ -192,8 +262,18 @@ class AsyncWebCrawler:
         """
         Überprüft, ob eine URL zur gleichen Domain wie die Start-URL gehört.
         Checks if a URL belongs to the same domain as the start URL.
+
+        Ein führendes "www." wird ignoriert, sodass "www.test.com" und "test.com"
+        als dieselbe Domain gelten.
+        A leading "www." is ignored, so "www.test.com" and "test.com" count as the
+        same domain.
         """
-        return urlparse(url).netloc == self.domain
+        def registrable(netloc: str) -> str:
+            netloc = netloc.lower()
+            if netloc.startswith("www."):
+                netloc = netloc[4:]  # Entfernt das führende www. / Strips the leading www.
+            return netloc
+        return registrable(urlparse(url).netloc) == registrable(self.domain)
 
     async def _fetch_and_parse_page(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
         """
@@ -321,26 +401,72 @@ class AsyncWebCrawler:
 
         print("\nCrawl abgeschlossen.") # Crawler-Abschlussmeldung.
                                         # Crawler completion message.
-        self.reporter.generate_report() # Generiert den Abschlussbericht.
-                                        # Generates the final report.
+        self.reporter.generate_report(self.output_path) # Generiert den Abschlussbericht (optional in Datei).
+                                                         # Generates the final report (optionally to a file).
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Asynchroner Web-Crawler zur Erkennung defekter Links.") # Argument-Parser-Beschreibung.
-                                                                                                       # Argument parser description.
-    parser.add_argument("start_url", type=str, help="Die Start-URL für den Crawl.") # Argument für die Start-URL.
-                                                                                 # Argument for the start URL.
-    parser.add_argument("--max-depth", type=int, default=1, help="Die maximale Tiefe, bis zu der der Crawler Links verfolgen soll (Standard: 1).") # Argument für die maximale Tiefe.
-                                                                                                                                              # Argument for max depth.
-    parser.add_argument("--concurrency", type=int, default=5, help="Die maximale Anzahl gleichzeitiger HTTP-Anfragen (Standard: 5).") # Argument für die Parallelität.
-                                                                                                                                  # Argument for concurrency.
+def build_arg_parser() -> argparse.ArgumentParser:
+    """
+    Erstellt den Argument-Parser für die Kommandozeile.
+    Builds the command-line argument parser.
+    """
+    parser = argparse.ArgumentParser(description="Asynchroner Web-Crawler zur Erkennung defekter Links.")
+    # start_url ist optional, wenn er über die Konfigurationsdatei bereitgestellt wird.
+    # start_url is optional if provided via the config file.
+    parser.add_argument("start_url", type=str, nargs="?", default=None,
+                        help="Die Start-URL für den Crawl. Optional, wenn in der Config-Datei gesetzt.")
+    parser.add_argument("--config", type=str, default=None,
+                        help=f"Pfad zu einer JSON-Konfigurationsdatei (Standard: {DEFAULT_CONFIG_FILENAME}, falls vorhanden).")
+    parser.add_argument("--max-depth", type=int, default=None,
+                        help="Die maximale Tiefe, bis zu der der Crawler Links verfolgen soll (Standard: 1).")
+    parser.add_argument("--concurrency", type=int, default=None,
+                        help="Die maximale Anzahl gleichzeitiger HTTP-Anfragen (Standard: 5).")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Pfad, in den der Bericht über defekte Links geschrieben wird.")
+    return parser
 
+
+def main():
+    """
+    Einstiegspunkt: Argumente parsen, Konfiguration laden und den Crawler starten.
+    Entry point: parse arguments, load configuration and start the crawler.
+    """
+    parser = build_arg_parser()
     args = parser.parse_args()
 
+    # Konfigurationsdatei bestimmen: explizit via --config oder Standarddatei, falls vorhanden.
+    # Determine config file: explicit via --config or the default file if present.
+    config = {}
+    config_path = args.config
+    if config_path is None and os.path.isfile(DEFAULT_CONFIG_FILENAME):
+        config_path = DEFAULT_CONFIG_FILENAME
+    if config_path is not None:
+        try:
+            config = load_config(config_path)
+            print(f"Konfiguration geladen aus / Loaded configuration from: {config_path}")
+        except (FileNotFoundError, ValueError) as e:
+            parser.error(f"Could not load config file '{config_path}': {e}")
+
+    cli_overrides = {
+        "start_url": args.start_url,
+        "max_depth": args.max_depth,
+        "concurrency": args.concurrency,
+        "output_path": args.output,
+    }
+    settings = resolve_settings(cli_overrides, config)
+
+    if not settings["start_url"]:
+        parser.error("A start URL is required, either as an argument or via 'start_url' in the config file.")
+
     crawler = AsyncWebCrawler(
-        start_url=args.start_url,
-        max_depth=args.max_depth,
-        concurrency=args.concurrency
+        start_url=settings["start_url"],
+        max_depth=settings["max_depth"],
+        concurrency=settings["concurrency"],
+        output_path=settings["output_path"],
     )
     asyncio.run(crawler.run()) # Startet den asynchronen Crawling-Prozess.
                                # Starts the asynchronous crawling process.
+
+
+if __name__ == "__main__":
+    main()
